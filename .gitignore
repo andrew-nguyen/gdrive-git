@@ -7,3 +7,6 @@ pom.xml.asc
 *.class
 /.lein-*
 /.nrepl-port
+mshi-611-93b589c0174e.json
+*.p12
+/creds.edn
