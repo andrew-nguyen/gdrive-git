@@ -1,6 +1,7 @@
 (ns gdrive-git.core
   (:require [clojure.edn :as edn]
-            [clojure.java.io :as io])
+            [clojure.java.io :as io]
+            [pallet.thread-expr :refer [when->]])
   (:import [com.google.api.client.googleapis.auth.oauth2 GoogleAuthorizationCodeFlow
                                                          GoogleAuthorizationCodeFlow$Builder
                                                          GoogleClientSecrets
@@ -64,9 +65,14 @@
       (println "An error occured:" e))))
 
 (defn files
-  [service]
+  [service & [query-str]]
   (try
-    (let [files (-> service .files .list .execute)]
+    (let [files (-> service 
+                    .files
+                    .list
+                    (when-> query-str
+                      (.setQ query-str))
+                    .execute)]
       files)
     (catch IOException e
       (println "An error occured:" e))))
