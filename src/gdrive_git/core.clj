@@ -33,16 +33,20 @@
 
 (def creds (edn/read-string (slurp "creds.edn")))
 
-(def service-email (:service-email creds))
-(def key-file (:key-file creds))
+(defn file
+  [f]
+  (let [f2 (io/file f)]
+    (if (.exists f2)
+      f2
+      (io/file (io/resource f)))))
 
 (defn build-credential
-  [service-email key-file]
+  [creds] 
   (-> (GoogleCredential$Builder.)
       (.setTransport http-transport)
       (.setJsonFactory json-factory)
-      (.setServiceAccountId service-email)
-      (.setServiceAccountPrivateKeyFromP12File key-file)
+      (.setServiceAccountId (:service-email creds))
+      (.setServiceAccountPrivateKeyFromP12File (file (:key-file creds)))
       (.setServiceAccountScopes [DriveScopes/DRIVE])
       .build))
 
