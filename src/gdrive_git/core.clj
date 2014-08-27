@@ -16,26 +16,12 @@
            
            [java.io InputStreamReader IOException]))
 
-;(def default-secrets "mshi-611-93b589c0174e.json")
-;
-;(defn get-secrets
-;  [json-resource-file]
-;  (GoogleClientSecrets/load (JacksonFactory/getDefaultInstance)
-;                            (io/reader (io/resource json-resource-file))))
-
-;(defn build-flow
-;  [secrets]
-;  (-> (GoogleAuthorizationCodeFlow$Builder. (NetHttpTransport.)
-;                                            (JacksonFactory.)
-;                                            secrets
-;                                            [DriveScopes/DRIVE])))
-
 (def http-transport (GoogleNetHttpTransport/newTrustedTransport))
 (def json-factory (JacksonFactory/getDefaultInstance))
 
 (def creds (edn/read-string (slurp "creds.edn")))
 
-(defn as-file
+(defn find-file
   [f]
   (let [f2 (io/file f)]
     (if (.exists f2)
@@ -48,7 +34,7 @@
       (.setTransport http-transport)
       (.setJsonFactory json-factory)
       (.setServiceAccountId (:service-email creds))
-      (.setServiceAccountPrivateKeyFromP12File (as-file (:key-file creds)))
+      (.setServiceAccountPrivateKeyFromP12File (find-file (:key-file creds)))
       (.setServiceAccountScopes [DriveScopes/DRIVE])
       .build))
 
