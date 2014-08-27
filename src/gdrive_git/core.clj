@@ -1,5 +1,6 @@
 (ns gdrive-git.core
-  (:require [clojure.edn :as edn]
+  (:require [clj-jgit.porcelain :as g]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [pallet.thread-expr :refer [when->]])
   (:import [com.google.api.client.googleapis.auth.oauth2 GoogleAuthorizationCodeFlow
@@ -80,13 +81,17 @@
   (id [file]))
 
 (defprotocol FileProtocol
-  (download [file service])
-  (download-url [file])
   (original-filename [file])
   (title [file])
   (version [file])
-  
   (folder? [file]))
+
+(defprotocol RevisionProtocol
+  (md5 [revision]))
+
+(defprotocol DownloadProtocol
+  (download [file service])
+  (download-url [file]))
 
 (def folder-mimetype "application/vnd.google-apps.folder")
 
@@ -101,16 +106,29 @@
 (extend-type File
   IDProtocol
   (id [file] (.getId file))
-            
-  FileProtocol
+  
+  DownloadProtocol          
   (download [file service] (_download file service))
   (download-url [file] (.getDownloadUrl file))
+  
+  FileProtocol
   (original-filename [file] (.getOriginalFilename file))
   (title [file] (.getTitle file))
   (version [file] (.getVersion file))
    
-  (folder? [file] (= (.getMimeType file) folder-mimetype))          
-  )
+  (folder? [file] (= (.getMimeType file) folder-mimetype)))
+
+(extend-type Revision
+  IDProtocol
+  (id [file] (.getId file))
+           
+  DownloadProtocol 
+  (download [file service] (_download file service))
+  (download-url [file] (.getDownloadUrl file))
+             
+  RevisionProtocol
+  (md5 [revision] (.getMd5Checksum revision)))
+
 
 (extend-type ChildReference
   IDProtocol
@@ -138,7 +156,7 @@
     (->RFile file)))
 
 (defprotocol R
-  (crawl [self service path]))
+  (crawl [self service path repo]))
 
 (defn mkdir
   [d]
@@ -151,26 +169,40 @@
     (when-not (.createNewFile file)
       (.setLastModified file (.getTime (java.util.Date.))))))
 
+(defn strip-leading-folder
+  [s]
+  (let [splits (clojure.string/split s #"/")]
+    (apply str (interpose "/" (rest splits)))))
+
 (extend-protocol R
   RFile
-  (crawl [self service path]
+  (crawl [self service path repo]
     ;(touch (str path "/" (title (:google-file self))))
     (let [file (:google-file self)
-          full-path (str path "/" (title file))]
-      (spit full-path (slurp (download file service)))))
+          file-id (id file)
+          full-path (str path "/" (title file))
+          revisions (revisions service file-id)]
+      (doseq [r revisions]
+        (spit full-path (slurp (download r service)))
+        (println "git-add path:" full-path)
+        (let [relative-path (strip-leading-folder full-path)]
+          (g/git-add repo relative-path)
+          (g/git-commit repo (str (strip-leading-folder relative-path) " - " (md5 r)))))))
   
   RFolder
-  (crawl [self service path]
+  (crawl [self service path repo]
     (let [file (:google-file self)]
       (mkdir path)
       (let [path (str path "/" (title file))
             children (children service file)]
         (mkdir path)
         (doseq [c children]
-          (crawl (coerce c) service path))))))
+          (crawl (coerce c) service path repo))))))
 
 (defn run
-  [n]
-  (let [service (drive-service (build-credential creds))]
+  [n dir]
+  
+  (let [repo (g/git-init dir)
+        service (drive-service (build-credential creds))]
     (doseq [f (map coerce (files service (format "title contains '%s'" n)))]
-      (crawl f service "output"))))
+      (crawl f service dir repo))))
