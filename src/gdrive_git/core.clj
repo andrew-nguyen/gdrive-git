@@ -15,7 +15,8 @@
                                           DriveScopes]
            [com.google.api.services.drive.model ChildReference File Revision RevisionList]
            
-           [java.io InputStreamReader IOException]))
+           [java.io FileNotFoundException InputStreamReader IOException]
+           [org.eclipse.jgit.api.errors NoHeadException]))
 
 (def http-transport (GoogleNetHttpTransport/newTrustedTransport))
 (def json-factory (JacksonFactory/getDefaultInstance))
@@ -174,6 +175,17 @@
   (let [splits (clojure.string/split s #"/")]
     (apply str (interpose "/" (rest splits)))))
 
+(defn filter-md5
+  [msg]
+  (last (clojure.string/split msg #" - ")))
+
+(defn get-revision-md5s
+  [repo]
+  (try
+    (set (map #(filter-md5 (.getShortMessage %)) (g/git-log repo)))
+    (catch NoHeadException e
+      #{})))
+
 (extend-protocol R
   RFile
   (crawl [self service path repo]
@@ -185,9 +197,12 @@
       (doseq [r revisions]
         (spit full-path (slurp (download r service)))
         (println "git-add path:" full-path)
-        (let [relative-path (strip-leading-folder full-path)]
-          (g/git-add repo relative-path)
-          (g/git-commit repo (str (strip-leading-folder relative-path) " - " (md5 r)))))))
+        (let [relative-path (strip-leading-folder full-path)
+              revision-md5 (md5 r)
+              md5s (get-revision-md5s repo)]
+          (when-not (contains? md5s revision-md5)
+            (g/git-add repo relative-path)
+            (g/git-commit repo (str (strip-leading-folder relative-path) " - " revision-md5)))))))
   
   RFolder
   (crawl [self service path repo]
@@ -199,10 +214,16 @@
         (doseq [c children]
           (crawl (coerce c) service path repo))))))
 
+(defn load-or-create-repo
+  [path]
+  (try
+    (g/load-repo path)
+    (catch FileNotFoundException e
+      (g/git-init path))))
+
 (defn run
   [n dir]
-  
-  (let [repo (g/git-init dir)
+  (let [repo (load-or-create-repo dir)
         service (drive-service (build-credential creds))]
     (doseq [f (map coerce (files service (format "title contains '%s'" n)))]
       (crawl f service dir repo))))
