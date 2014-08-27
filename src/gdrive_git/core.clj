@@ -16,7 +16,8 @@
            [com.google.api.services.drive.model ChildReference File Revision RevisionList]
            
            [java.io FileNotFoundException InputStreamReader IOException]
-           [org.eclipse.jgit.api.errors NoHeadException]))
+           [org.eclipse.jgit.api.errors NoHeadException])
+  (:gen-class))
 
 (def http-transport (GoogleNetHttpTransport/newTrustedTransport))
 (def json-factory (JacksonFactory/getDefaultInstance))
@@ -43,6 +44,7 @@
 (defn drive-service
   [credential]
   (-> (Drive$Builder. http-transport json-factory credential)
+      (.setApplicationName "gdrive-git")
       .build))
 
 (defn revisions
@@ -88,7 +90,8 @@
   (folder? [file]))
 
 (defprotocol RevisionProtocol
-  (md5 [revision]))
+  (md5 [revision])
+  (modified-date [revision]))
 
 (defprotocol DownloadProtocol
   (download [file service])
@@ -128,7 +131,11 @@
   (download-url [file] (.getDownloadUrl file))
              
   RevisionProtocol
-  (md5 [revision] (.getMd5Checksum revision)))
+  (md5 [revision] (.getMd5Checksum revision))
+  (modified-date [revision] (-> revision
+                                .getModifiedDate
+                                .getValue
+                                java.util.Date.)))
 
 
 (extend-type ChildReference
@@ -196,13 +203,15 @@
           revisions (revisions service file-id)]
       (doseq [r revisions]
         (spit full-path (slurp (download r service)))
-        (println "git-add path:" full-path)
         (let [relative-path (strip-leading-folder full-path)
               revision-md5 (md5 r)
-              md5s (get-revision-md5s repo)]
+              md5s (get-revision-md5s repo)
+              timestamp (modified-date r)]
+          (println "git-add path:" full-path " - " timestamp)
           (when-not (contains? md5s revision-md5)
             (g/git-add repo relative-path)
-            (g/git-commit repo (str (strip-leading-folder relative-path) " - " revision-md5)))))))
+            (g/git-commit repo (str (strip-leading-folder relative-path) " - " revision-md5 "\n\n"
+                                    timestamp)))))))
   
   RFolder
   (crawl [self service path repo]
@@ -221,7 +230,7 @@
     (catch FileNotFoundException e
       (g/git-init path))))
 
-(defn run
+(defn -main
   [n dir]
   (let [repo (load-or-create-repo dir)
         service (drive-service (build-credential creds))]
