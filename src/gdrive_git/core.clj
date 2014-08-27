@@ -193,21 +193,31 @@
     (catch NoHeadException e
       #{})))
 
+(defn full-path
+  [p]
+  (str (:base p) "/" (:relative p)))
+
+(defn append-relative
+  [p path]
+  (if (:relative p)
+    (update-in p [:relative] str "/" path)
+    (assoc p :relative path)))
+
 (extend-protocol R
   RFile
   (crawl [self service path repo]
     ;(touch (str path "/" (title (:google-file self))))
     (let [file (:google-file self)
           file-id (id file)
-          full-path (str path "/" (title file))
+          path (append-relative path (title file))
           revisions (revisions service file-id)]
       (doseq [r revisions]
-        (spit full-path (slurp (download r service)))
-        (let [relative-path (strip-leading-folder full-path)
+        (spit (full-path path) (slurp (download r service)))
+        (let [relative-path (:relative path) 
               revision-md5 (md5 r)
               md5s (get-revision-md5s repo)
               timestamp (modified-date r)]
-          (println "git-add path:" full-path " - " timestamp)
+          (println "git-add path:" relative-path " - " timestamp)
           (when-not (contains? md5s revision-md5)
             (g/git-add repo relative-path)
             (g/git-commit repo (str (strip-leading-folder relative-path) " - " revision-md5 "\n\n"
@@ -216,12 +226,13 @@
   RFolder
   (crawl [self service path repo]
     (let [file (:google-file self)]
-      (mkdir path)
-      (let [path (str path "/" (title file))
-            children (children service file)]
-        (mkdir path)
-        (doseq [c children]
-          (crawl (coerce c) service path repo))))))
+      (when-not (= ".git" (title file))
+        (mkdir (full-path path))
+        (let [path (append-relative path (title file))
+              children (children service file)]
+          (mkdir (full-path path))
+          (doseq [c children]
+            (crawl (coerce c) service path repo)))))))
 
 (defn load-or-create-repo
   [path]
@@ -235,4 +246,4 @@
   (let [repo (load-or-create-repo dir)
         service (drive-service (build-credential creds))]
     (doseq [f (map coerce (files service (format "title contains '%s'" n)))]
-      (crawl f service dir repo))))
+      (crawl f service {:base dir :relative nil} repo))))
